@@ -1,9 +1,6 @@
 package org.jvt;
 
-import org.apache.flume.Context;
-import org.apache.flume.Event;
-import org.apache.flume.EventDrivenSource;
-import org.apache.flume.conf.BatchSizeSupported;
+import org.apache.flume.*;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.event.EventBuilder;
 import org.apache.flume.instrumentation.SourceCounter;
@@ -22,7 +19,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
-public class EarthquakeSource extends AbstractSource implements Configurable, EventDrivenSource {
+public class EarthquakeSource extends AbstractSource implements Configurable, PollableSource {
     private final DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
     private final String baseUrl = "https://earthquake.usgs.gov/fdsnws/event/1";
     private volatile boolean running = true;
@@ -32,7 +29,7 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
     private Date lastTimeCheckedAt = new Date();
     private int count = 0;
     private int maxAllowed = 0;
-    private long poolingIntervalMs = 10000;
+    private final long backOffIntervalMs = 10000;
     private SourceCounter sourceCounter;
 
 
@@ -42,7 +39,6 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
 
 
         this.dateStart = this.stringToDate(dateStart);
-        poolingIntervalMs = context.getLong("poolingIntervalMs", poolingIntervalMs);
 
         if (sourceCounter == null) {
             sourceCounter = new SourceCounter(getName());
@@ -55,34 +51,10 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
 
         this.setCounters(null);
 
-        Thread thread = new Thread(() -> {
-            while (running) {
-                try {
-                    setCounters(null);
-                    JSONArray jsonArray = getEvents();
-
-                    for (int i = 0; i < jsonArray.length(); i++) {
-                        JSONObject quake = jsonArray.getJSONObject(i);
-                        byte[] body = quake.toString().getBytes(StandardCharsets.UTF_8);
-                        Event event = EventBuilder.withBody(body);
-                        getChannelProcessor().processEvent(event);
-                    }
-
-                    lastTimeCheckedAt = new Date();
-                    Thread.sleep(poolingIntervalMs);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        });
-
-        thread.start();
-
         LOGGER.info("Earthquake source started...");
 
         super.start();
     }
-
 
     @Override
     public synchronized void stop() {
@@ -178,5 +150,41 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
             }
         }
         return bodyString;
+    }
+
+    @Override
+    public Status process() throws EventDeliveryException {
+        try {
+            setCounters(null);
+            JSONArray jsonArray = getEvents();
+            int length = jsonArray.length();
+
+            if (length == 0) {
+                return Status.BACKOFF;
+            }
+
+            for (int i = 0; i < length; i++) {
+                JSONObject quake = jsonArray.getJSONObject(i);
+                byte[] body = quake.toString().getBytes(StandardCharsets.UTF_8);
+                Event event = EventBuilder.withBody(body);
+                getChannelProcessor().processEvent(event);
+            }
+
+            lastTimeCheckedAt = new Date();
+
+            return Status.READY;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public long getBackOffSleepIncrement() {
+        return backOffIntervalMs;
+    }
+
+    @Override
+    public long getMaxBackOffSleepInterval() {
+        return backOffIntervalMs * 10;
     }
 }
