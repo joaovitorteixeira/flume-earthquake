@@ -22,7 +22,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
-public class EarthquakeSource extends AbstractSource implements Configurable, EventDrivenSource, BatchSizeSupported {
+public class EarthquakeSource extends AbstractSource implements Configurable, EventDrivenSource {
     private final DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
     private final String baseUrl = "https://earthquake.usgs.gov/fdsnws/event/1";
     private volatile boolean running = true;
@@ -32,9 +32,6 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
     private Date lastTimeCheckedAt = new Date();
     private int count = 0;
     private int maxAllowed = 0;
-    private int maxBatchSize = 1000;
-    private long batchEndTime = 0;
-    private int maxBatchDurationMs = 1000;
     private long poolingIntervalMs = 10000;
     private SourceCounter sourceCounter;
 
@@ -45,9 +42,7 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
 
 
         this.dateStart = this.stringToDate(dateStart);
-        maxBatchSize = context.getInteger("maxBatchSize", maxBatchSize);
         poolingIntervalMs = context.getLong("poolingIntervalMs", poolingIntervalMs);
-        maxBatchDurationMs = context.getInteger("maxBatchDurationMs", maxBatchDurationMs);
 
         if (sourceCounter == null) {
             sourceCounter = new SourceCounter(getName());
@@ -59,24 +54,17 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
         LOGGER.info("Starting earthquake source...");
 
         this.setCounters(null);
-        batchEndTime = System.currentTimeMillis() + maxBatchDurationMs;
 
         Thread thread = new Thread(() -> {
             while (running) {
                 try {
-                    if (System.currentTimeMillis() >= batchEndTime) {
-                        setCounters(null);
-                        JSONArray jsonArray = getEvents();
+                    setCounters(null);
+                    JSONArray jsonArray = getEvents();
 
-                        if (jsonArray.length() > maxBatchSize) {
-                            sourceCounter.addToEventReceivedCount(jsonArray.length());
-                            batchEndTime = System.currentTimeMillis() + maxBatchDurationMs;
-                            sourceCounter.addToEventAcceptedCount(jsonArray.length());
-                        }
-
-                        byte[] bytes = jsonArray.toString().getBytes(StandardCharsets.UTF_8);
-                        Event event = EventBuilder.withBody(bytes);
-
+                    for (int i = 0; i < jsonArray.length(); i++) {
+                        JSONObject quake = jsonArray.getJSONObject(i);
+                        byte[] body = quake.toString().getBytes(StandardCharsets.UTF_8);
+                        Event event = EventBuilder.withBody(body);
                         getChannelProcessor().processEvent(event);
                     }
 
@@ -144,8 +132,9 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
 
     private Date getRebalancedEndDate(Date startDate, Date endDate) {
         Date newEndDate = endDate;
+        int maxSupportedEvent = 300; // 2000 events can use a lot of heap memory
 
-        while (this.count > this.maxAllowed) {
+        while (count > maxAllowed || count > maxSupportedEvent) {
             long diffMilliseconds = newEndDate.getTime() - startDate.getTime();
             diffMilliseconds = diffMilliseconds / 2;
             long newEndDateTime = diffMilliseconds + startDate.getTime();
@@ -154,8 +143,6 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
 
             this.setCounters(newEndDate);
         }
-
-        System.out.println(this.count);
 
         return newEndDate;
     }
@@ -191,10 +178,5 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Ev
             }
         }
         return bodyString;
-    }
-
-    @Override
-    public long getBatchSize() {
-        return maxBatchSize;
     }
 }
