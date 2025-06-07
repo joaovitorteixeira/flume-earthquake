@@ -25,12 +25,10 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
     private static final Logger LOGGER =
             LoggerFactory.getLogger(EarthquakeSource.class);
     private Date dateStart = new GregorianCalendar(2025, Calendar.JANUARY, 1).getTime();
-    private Date lastTimeCheckedAt = new Date();
     private int count = 0;
     private int maxAllowed = 0;
-    private final long backOffIntervalMs = 10000;
+    private final long backOffIntervalMs = 60000;
     private SourceCounter sourceCounter;
-
 
     @Override
     public void configure(Context context) {
@@ -65,7 +63,7 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
     }
 
     private void setCounters(Date endDate) {
-        endDate = (endDate != null) ? endDate : this.lastTimeCheckedAt;
+        endDate = (endDate != null) ? endDate : new Date();
         LOGGER.info("Setting event counter for end date {}", endDate);
 
         String urlStr = String.format("%s/count?format=geojson&starttime=%s&endtime=%s",
@@ -80,9 +78,8 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
 
     private JSONArray getEvents() {
         LOGGER.info("Getting events...");
-        Date endDate = this.getRebalancedEndDate(this.dateStart, this.lastTimeCheckedAt);
+        Date endDate = this.getRebalancedEndDate(this.dateStart, new Date());
         String urlStr = String.format("%s/query?format=geojson&starttime=%s&endtime=%s", this.baseUrl, this.dateToString(this.dateStart), this.dateToString(endDate));
-        this.dateStart = endDate;
 
         JSONObject result = this.makeRequest(urlStr);
         JSONObject metadata = result.getJSONObject("metadata");
@@ -90,6 +87,8 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
 
         LOGGER.info("Number total of events {}", metadata.get("count"));
         LOGGER.debug("Event URL {}", metadata.get("url"));
+
+        this.dateStart = endDate;
 
         return features;
     }
@@ -99,13 +98,18 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
         int maxSupportedEvent = 300; // 2000 events can use a lot of heap memory
 
         while (count > maxAllowed || count > maxSupportedEvent) {
-            long diffMilliseconds = newEndDate.getTime() - startDate.getTime();
-            diffMilliseconds = diffMilliseconds / 2;
-            long newEndDateTime = diffMilliseconds + startDate.getTime();
+            long diffMillisecondsMs = (newEndDate.getTime() - startDate.getTime()) / 2;
+            long newEndDateTime = diffMillisecondsMs + startDate.getTime();
+            long minWindowDiffMs = 500;
 
             newEndDate = new Date(newEndDateTime);
 
             this.setCounters(newEndDate);
+
+            if (diffMillisecondsMs < minWindowDiffMs) {
+                LOGGER.error("Unable to reduce window further. Using minimal window.");
+                break;
+            }
         }
 
         return newEndDate;
@@ -161,8 +165,6 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
                 Event event = EventBuilder.withBody(body);
                 getChannelProcessor().processEvent(event);
             }
-
-            lastTimeCheckedAt = new Date();
 
             return Status.READY;
         } catch (Exception e) {
