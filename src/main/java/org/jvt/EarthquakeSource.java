@@ -22,7 +22,6 @@ import java.util.*;
 public class EarthquakeSource extends AbstractSource implements Configurable, PollableSource {
     private final DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
     private final String baseUrl = "https://earthquake.usgs.gov/fdsnws/event/1";
-    private volatile boolean running = true;
     private static final Logger LOGGER =
             LoggerFactory.getLogger(EarthquakeSource.class);
     private Date dateStart = new GregorianCalendar(2025, Calendar.JANUARY, 1).getTime();
@@ -54,13 +53,6 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
         LOGGER.info("Earthquake source started...");
 
         super.start();
-    }
-
-    @Override
-    public synchronized void stop() {
-        running = false;
-
-        super.stop();
     }
 
     private String dateToString(Date date) {
@@ -153,7 +145,7 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
     }
 
     @Override
-    public Status process() throws EventDeliveryException {
+    public Status process() {
         try {
             setCounters(null);
             JSONArray jsonArray = getEvents();
