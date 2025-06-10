@@ -9,8 +9,17 @@ the [PollableSource Interface](https://flume.apache.org/releases/content/1.7.0/a
 
 The following settings are configurable:
 
-- **dateStart**: The start date from which the source begins polling earthquake events. If not defined, it defaults to
-  `01/01/2025`. The allowed format is using [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601). Example: 2025-01-01T00:00:00Z 
+- **dateStart**: A fixed start date ([ISO 8601](https://en.wikipedia.org/wiki/ISO_8601)) to begin fetching historical data.
+  The system will fetch data from this date up to the current time, and once it reaches "now", 
+it switches to using pollingWindowMs to continue polling new and potentially late data.
+<br>Default: 01/01/2025
+<br>Example: 2025-01-01T00:00:00Z
+
+- **poolingWindowMs**: The duration (in milliseconds) of the time window used for polling recent data once the system 
+catches up to the present.
+<br>This setting ensures the system captures late-arriving data by repeatedly fetching records from the last 
+`pollingWindowMs` milliseconds. 
+<br>Default: 86400000 (24 hours).
 
 ## Usage
 

@@ -28,13 +28,14 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
     private int count = 0;
     private int maxAllowed = 0;
     private final long backOffIntervalMs = 60000;
+    private double poolingWindowMs = 8.64e7;
     private SourceCounter sourceCounter;
 
     @Override
     public void configure(Context context) {
         String dateStart = context.getString("dateStart", this.dateToString(this.dateStart));
 
-
+        poolingWindowMs = context.getDouble("poolingWindowMs", poolingWindowMs);
         this.dateStart = this.stringToDate(dateStart);
 
         if (sourceCounter == null) {
@@ -156,6 +157,7 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
             int length = jsonArray.length();
 
             if (length == 0) {
+                resetPollingWindow();
                 return Status.BACKOFF;
             }
 
@@ -169,6 +171,14 @@ public class EarthquakeSource extends AbstractSource implements Configurable, Po
             return Status.READY;
         } catch (Exception e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private void resetPollingWindow() {
+        long diff = new Date().getTime() - this.dateStart.getTime();
+
+        if (diff < this.poolingWindowMs) {
+            this.dateStart = new Date((long) (this.dateStart.getTime() - this.poolingWindowMs));
         }
     }
 
